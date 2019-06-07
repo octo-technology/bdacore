@@ -1,3 +1,6 @@
+[![PyPI version](https://badge.fury.io/py/bdacore.svg)](https://badge.fury.io/py/bdacore)
+[![Anaconda-Server Badge](https://anaconda.org/octo/bdacore/badges/latest_release_date.svg)](https://anaconda.org/octo/bdacore)
+[![Anaconda-Server Badge](https://anaconda.org/octo/bdacore/badges/version.svg)](https://anaconda.org/octo/bdacore)
 [![Build Status](http://ec2-52-212-162-0.eu-west-1.compute.amazonaws.com:8080/buildStatus/icon?job=bdacore%2Fmaster)](http://ec2-52-212-162-0.eu-west-1.compute.amazonaws.com:8080/job/bdacore/job/master/)
 
 
