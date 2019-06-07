@@ -1,0 +1,214 @@
+// Declaring global vars which will contains containers for the two testing environments
+def python2Container
+def python3Container
+
+pipeline {
+
+    agent any
+
+    options { buildDiscarder(logRotator(numToKeepStr: '10')) } // Keep the 10 most recent builds
+
+    stages {
+        stage('Code pull') {
+            steps {
+                checkout scm
+            }
+        }
+        stage('Create environments') {
+            parallel {
+                stage('Create conda env Python 2.7') {
+                    steps {
+                        retry (1) { // Retry in case of CondaHTTPError
+                            script {
+                                buildArgs = """-f ci/Dockerfile \
+                                               --build-arg ENV_PY_VERSION=2.7 \
+                                               --build-arg ENV_NAME=bdacore_py2 \
+                                               ./"""
+                                python2Container = docker.build('python2', buildArgs)
+                            }
+                        }
+                    }
+                }
+                stage('Create conda env Python 3.6') {
+                    steps {
+                        retry (1) { // Retry in case of CondaHTTPError
+                            script {
+                                buildArgs = """-f ci/Dockerfile \
+                                               --build-arg ENV_PY_VERSION=3.6 \
+                                               --build-arg ENV_NAME=bdacore_py3 \
+                                               ./"""
+                                python3Container = docker.build('python3', buildArgs)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Unit tests') {
+
+            parallel {
+                stage('Unit tests on Python 2.7') {
+                    steps {
+                        script {
+                            python2Container.inside {
+                                sh """ #!/bin/bash
+                                    make unittests ENV_NAME=bdacore_py2
+                                """
+                            }
+                        }
+                    }
+                }
+
+                stage('Unit tests on Python 3.6') {
+                    steps {
+                        script {
+                            python3Container.inside {
+                                sh """ #!/bin/bash
+                                    make unittests ENV_NAME=bdacore_py3
+                                """
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        stage('Acceptance tests') {
+
+            parallel {
+                stage('Acceptance tests on Python 2.7') {
+                    steps {
+                        script {
+                            python2Container.inside {
+                                sh """ #!/bin/bash
+                                    make acceptance-tests ENV_NAME=bdacore_py2
+                                """
+                            }
+                        }
+                    }
+                }
+
+                stage('Acceptance tests on Python 3.6') {
+                    steps {
+                        script {
+                            python3Container.inside {
+                                sh """ #!/bin/bash
+                                    make acceptance-tests ENV_NAME=bdacore_py3
+                                """
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        stage('Coverage') {
+            environment {
+                REPORTS_FOLDER = "reports"
+            }
+            steps {
+                script {
+                    python3Container.inside {
+                        step([$class    : 'XUnitBuilder',
+                              thresholds: [[$class: 'FailedThreshold', unstableThreshold: '1']],
+                              tools     : [[$class: 'JUnitType', pattern: "${REPORTS_FOLDER}/xunit_reports.xml"]]])
+                        step([$class: 'CoberturaPublisher', coberturaReportFile: "${REPORTS_FOLDER}/coverage.xml"])
+
+                        junit "${REPORTS_FOLDER}/**/*.xml"
+                    }
+                }
+            }
+        }
+        stage('Packaging any wheel') {
+            steps {
+                script {
+                    python3Container.inside {
+                        // package for python 2 and 3, see 'universal' property in
+                        // bdist_wheel section in setup.cfg
+                        sh """ #!/bin/bash
+                            make package ENV_NAME=bdacore_py3
+                        """
+                    }
+                }
+            }
+        }
+        stage('Sphinx documentation generation') {
+            environment {
+                AWS_CREDS = credentials('aws_access')
+                AWS_ACCESS_KEY_ID = "${AWS_CREDS_USR}"
+                AWS_SECRET_ACCESS_KEY = "${AWS_CREDS_PSW}"
+            }
+            when {
+                branch 'master'
+            }
+            steps {
+                script {
+                    python3Container.inside {
+                        sh """ #!/bin/bash
+                            make -C docs docs ENV_NAME=bdacore_py3
+                            aws s3 sync docs/_build/html s3://datadriver-doc-ddapi/bdacore
+                        """
+                    }
+                }
+            }
+        }
+        stage('Master branch upload') {
+            environment {
+                ANACONDA_CREDS = credentials('anaconda-cloud')
+            }
+            when {
+                branch 'master'
+            }
+            steps {
+                script {
+                    python3Container.inside {
+                        sh """ #!/bin/bash
+                            anaconda login --username ${ANACONDA_CREDS_USR} --password ${ANACONDA_CREDS_PSW} && \
+                            anaconda upload --force -u octo --package bdacore --label dev dist/*.whl
+                        """
+                    }
+                }
+            }
+        }
+        stage('Release upload') {
+            environment {
+                ANACONDA_CREDS = credentials('anaconda-cloud')
+            }
+            when {
+                tag pattern: "\\d+\\.\\d+\\.\\d+", comparator: "REGEXP"
+            }
+            steps {
+                script {
+                    python3Container.inside {
+                        sh """ #!/bin/bash
+                            anaconda login --username ${ANACONDA_CREDS_USR} --password ${ANACONDA_CREDS_PSW} && \
+                            anaconda upload --force -u octo --package bdacore dist/*.whl
+                        """
+                    }
+                }
+            }
+        }
+        stage('Feature branch upload') {
+            environment {
+                ANACONDA_CREDS = credentials('anaconda-cloud')
+            }
+            when {
+                allOf{
+                    not { tag pattern: "\\d+\\.\\d+\\.\\d+", comparator: "REGEXP"}
+                    expression {
+                        return (env.BRANCH_NAME != 'master')
+                    }
+                }
+            }
+            steps {
+                script {
+                    python3Container.inside {
+                        sh """ #!/bin/bash
+                            anaconda login --username ${ANACONDA_CREDS_USR} --password ${ANACONDA_CREDS_PSW} && \
+                            anaconda upload --force -u octo --package bdacore --label ${env.BRANCH_NAME} dist/*.whl
+                        """
+                    }
+                }
+            }
+        }
+    }
+}

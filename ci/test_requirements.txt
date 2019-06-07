@@ -1,0 +1,14 @@
+coverage
+pylint==1.5.4
+pytest
+pytest-cov
+nbformat
+nbconvert
+pydot
+graphviz
+sphinx>=1.5.*
+sphinx_bootstrap_theme>=0.4.*
+nbsphinx>=0.2.*
+sphinx-gallery>=0.1.*
+sphinx_rtd_theme
+zest.releaser
